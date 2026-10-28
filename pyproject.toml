@@ -1,7 +1,7 @@
 [project]
 name = "littleagents"
 version = "0.1.0"
-description = "Add your description here"
+description = "A minimal multi-agent framework"
 readme = "README.md"
 authors = [
     { name = "Lucas Thormann", email = "LucasThormann2@gmail.com" }
