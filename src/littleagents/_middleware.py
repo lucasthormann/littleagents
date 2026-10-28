@@ -1,5 +1,28 @@
+"""
+Middleware system for littleagents.
+
+This module provides the middleware infrastructure for intercepting and
+processing agent operations like model calls, tool calls, and memory access.
+
+Middleware uses async generators to support:
+- Event emission (for observability)
+- Approval requests (pausing execution)
+- Streaming transformations
+- Error recovery
+"""
+
+import asyncio
+import logging
+import re
+import time
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+
+from pydantic import BaseModel, Field
+
+from .context import AgentContext
+from .messages import Message
 
 class BaseMiddleware(ABC):
     """Abstract base class for middleware."""
