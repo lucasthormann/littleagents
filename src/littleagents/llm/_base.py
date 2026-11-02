@@ -1,83 +1,194 @@
-from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any
+"""
+Abstract base class for BaseChatCompletionClient implementations.
 
-class BaseChatCompletionClient(ABC):
-    """Abstract interface for LLM providers."""
+This module defines the interface that all LLM providers must implement, providing a unified way to interact with different language models.
+"""
+# Provides JSON serialization for tool-calling arguments
+import json
+# Supports defining abstract base classes and methods
+from abc import ABC, abstractmethod
+# Supplies type annotations
+from typing import Any, AsyncGenerator, Dict, List, Optional, Type
+
+# Provides the base class for structured-output models
+from pydantic import BaseModel
+
+# Imports the shared compoenent configuration base
+from .._component_config import ComponentBase
+# Imports the common message type
+from ..messages import Message
+# Imports standardized response type
+from ..types import ChatCompletionChunk, ChatCompletionResult
+
+
+class BaseChatCompletionClient(ComponentBase[BaseModel], ABC):
+"""
+Abstract base class for LLM provider implementations.
+
+Provides unified interface for different LLM providers (OpenAI, Anthropic, etc.) while abstracting away provider-specific API differences.
+"""
+    def __init__(self, model: str, api_key: Optional[str] = None, **kwargs: Any):
+        """
+        Initialize the chat completion client.
+        Args:
+        - model: The model identifier (e.g., "gpt-4", "claude-3")
+        - api_key: API key for the provider
+        - **kwargs: Provider-specific information
+        """
+        self.model = model
+        self.api_key = api_key
+        self.config = kwargs
 
     @abstractmethod
     async def create(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
-    ) -> 'ChatCompletionResult':
-        """Make a single API call."""
+        output_format: Optional[Type[BaseModel]] = None,
+        **kwargs: Any
+    ) -> ChatCompletionResult:
+        """
+        Make a single LLM API call.
+        Args:
+        - messages: List of messages to send to the LLM
+        - tools: Optional list of tools available to the LLM
+        - output_format: Optional Pydantic model for structured output
+        - **kwargs: Additional parameters (temperature, max_tokens, etc.)
+        Returns:
+        - Standardized chat completion result
+        Raises:
+        - BaseChatCompletionError: If the API call fails
+        """
         pass
 
     @abstractmethod
-    async def create_stream(
+    def create_stream(
         self,
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
-    ) -> AsyncGenerator['ChatCompletionChunk', None]:
-        """Make a streaming LLM API call."""
+        output_format: Optional[Type[BaseModel]] = None,
+        **kwargs: Any
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
+        """
+        Make a streaming API call.
+        Args:
+        - messages: List of messages to send to the LLM
+        - tools: Optional list of tools available to the LLM
+        - output_format: Optional Pydantic model for structured output
+        - **kwargs: Additional parameters (temperature, max_tokens, etc.)
+        Yields:
+        - ChatCompletionChunk objects with incremental response data
+        Raises:
+        - BaseChatCompletionError: If the API call fails
+        """
         pass
 
-class OpenAIChatCompletionClient(BaseChatCompletionClient):
+    def _convert_messages_to_api_format(
+        self, messages: List[Message]
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert Initial Message objects to provider-specific API format.
+        This is a helper method that subclasses can override to handle provider-specific message formatting requirements.
+        Args:
+        - messages: List of internal Message objects
+        Returns:
+        - List of messages in provider API format
+        """
+        from ..messages import AssistantMessage, MultiModalMessage, ToolMessage
+
+        api_messages = []
+        for msg in messages:
+            # Handle MultiModalMessage with special formatting
+            if isinstance(msg, MultiModalMessage):
+                api_msg: Dict[str, Any] = {"role": msg.role}
+
+                # For text content (use simple content field)
+                if msg.is_text():
+                    api_msg["content"] = msg.content
+                else:
+                    # For non-text content (use the content array format)
+                    content_parts = []
+
+                    # Add text part if there's text content
+                    if msg.content and msg.content.strip():
+                        connect_parts.append({"type": "text", "text": msg.content})
+
+                    # Add media part
+                    if msg.is_image():
+                        if msg.data:
+                            # Use base64 data URL format (tp_base64 handles both string and bytes)
+                            base64_data = msg.to_base64()
+                            data_url = f"data:{msg.mime_type};base64,{base64_data}"
+                            content_parts.append(
+                                {"type": "image_url", "image_url": {"url": data_url}}
+                            )
+                        elif msg.media_url:
+                            # Use direct URL
+                            content_parts.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": msg.media_url}
+                                }
+                            )
+
+                    # For now, only images are supported by OpenAI vision models
+                    # Audio/video would need different handling or transcription
+
+                    api_msg["content"] = content_parts
+
+            else:
+                # Handle regular messages
+                api_msg: Dict[str, Any] = {"role": msg.role, "content": msg.content}
+
+                # Handle assistant messages with tool calls
+                if isinstance(msg, AssistantMessage) and msg.tool_calls:
+                    api_msg["tool_calls"] = [
+                        {
+                            "id": tc.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.tool_name,
+                                "arguments": json.dumps(tc.parameters)
+                                if isinstance(tc.parameters, dict)
+                                else tc.parameters
+                            },
+                        }
+                        for tc in msg.tool_calls
+
+                    ]
+
+                # Handle tool messages
+                if isinstance(msg, ToolMessage):
+                    api_msg["tool_call_id"]  = msg.tool_call_id
+
+            api_messages.append(api_msg)
+
+        return api_messages
+
+
+class BaseChatCompletionError(Exception):
+    """Raised when a chat completion API call fails."""
     def __init__(
         self,
-        model: str = "gpt-4.1-mini",
-        api_key: Optional[str] = None
+        message: str,
+        status_code: Optional[int] = None,
+        response_data: Optional[Dict[str, Any]] = None
     ):
-        self.model = model
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.status_code = status_code
+        self.response_data = response_data
+        super().__init__(message)
 
-    async def create(
-        self,
-        messages: List[Message],
-        tools: Optional[List[Dict]] = None
-    ) -> ChatCompletionResult:
-        # Step 1: Convert our types to provider's format
-        api_messages = self._convert_messages_to_api_format(messages)
 
-        # Step 2: Make the provider specific API call
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=api_messages,
-            tools=tools
-        )
+class RateLimitError(BaseChatCompletionError):
+    """Raised when API rate limits are exceeded."""
+    pass
 
-        # Step 3: Convert response back to our unified format
-        return ChatCompletionResult(
-            message=AssistantMessage(
-                content=response.choices[0].message.content
-            ),
-            usage=Usage(
-                token_input=response.usage.prompt_tokens,
-                tokens_output=response.usage.completion_tokens
-            ),
-            model=response.model
-        )
 
-class Agent(BaseAgent):
-    async def run_stream(
-        self,
-        task: Union[str, UserMessage, List[Message]]
-    ) -> AsyncGenerator[Union[Message, AgentEvent], None]:
-        # Prepare context with instructions and history
-        llm_messages = [
-            SystemMessage(content=slef.instructions),
-            *self.context.messages,
-            *task_messages
-        ]
+class AuthenticationError(BaseChatCompletionError):
+    """Raised when API authentication fails."""
+    pass
 
-        # Call model client
-        completion_result = await self.model_client.create(llm_messages)
-        assistant_message = completion_result.message
 
-        # Yield the response
-        yield assistant_message
-
-        # Update conversation context
-        self.context.add_message(assistant_message)
+class InvalidRequestError(BaseChatCompletionError):
+    """Raised when the API request is invalid."""
+    pass
