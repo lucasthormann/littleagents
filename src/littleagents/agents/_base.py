@@ -8,8 +8,7 @@ functionality.
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type,
-Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -28,48 +27,37 @@ if TYPE_CHECKING:
     from ._agent_as_tool import AgentAsTool
 
 
+_MISSING: Any = object()
+"""Sentinel so a stale positional call is diagnosed before Python's generic error."""
+
 
 class BaseAgent(ComponentBase[BaseModel], ABC):
     """
     Abstract base class defining the core agent interface.
-
     All agents in the littleagents framework must inherit from this base class
     and implement its abstract methods, following the stub.md specification.
     """
-
-    name: str,
-    instructions: str,
-    model_client: 'BaseChatCompletionClient',
-    tools: Optional[List] = None,
-    memory: Optional['BaseMemory'] = None,
-    context: Optional['AgentContext'] = None,
-    middleware: Optional[List] = None,
-    max_iterations: int = 10
-):
-    self.name = name
-    self.instructions = instructions
-    self.model_client = model_client
-
-    # Process optional components with defaults
-    self.tools = self._process_tools(tools or [])
-    self.memory = memory
-    self.context = context or AgentContext()
-    self.middleware_chain = MiddlewareChain(
-        middleware or []
-    )
-
-    @abstractmethod
-    async def run(
+    def __init__(
         self,
-        task: Union[str, UserMessage, List[Message]]
-    ) -> 'AgentResponse':
-        """Execute agent and return final response."""
-        pass
+        name: str,
+        *_positional: Any,
+        instructions: str = _MISSING,
+        model_client: BaseChatCompletionClient = _MISSING,
+        description: str = "",
+        tools: Optional[List[Union[BaseTool, Callable]]] = None,
+        memory: Optional[BaseMemory] = None,
+        context: Optional[AgentContext] = None,
+        middlewares: Optional[List[BaseMiddleware]] = None,
+        max_iterations: int = 10,
+        output_format: Optional[Type[BaseModel]] = None,
+        summarize_tool_result: bool = True,
+        required_tools: Optional[List[str]] = None,
+        example_tasks: Optional[List[str]] = None,
+        compaction: Optional[CompactionStrategy] = None,
+        start_hooks: Optional[List] = None,
+        end_hooks: Optional[List] = None,
+        **kwargs: Any
+    ):
+        """
+        Initialize the base agent following stub.md specification.
 
-    @abstractmethod
-    def run_stream(
-        self,
-        task: Union[str, UserMessage, List[Message]]
-    ) -> AsyncGenerator[Union[Message, 'AgentEvent'], None]:
-        """Execute agent with streaming output."""
-        pass
